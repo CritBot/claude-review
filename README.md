@@ -274,10 +274,11 @@ make coverage-html     # open HTML report in browser
 
 ## Roadmap
 
-- **v1.0** — Core multi-agent pipeline, GitHub/GitLab support, Markdown/JSON output
-- **v1.1** — Memory layer: SQLite-backed persistent findings, cross-PR pattern detection
-- **v1.2** — `--fix` flag: auto-apply suggested fixes with confirmation
-- **v1.3** — Bitbucket support, Azure DevOps support
+- **v0.1.0** ✅ — Core multi-agent pipeline (finder/verifier/ranker), GitHub/GitLab/Bitbucket support, Markdown/JSON/annotations output, cost transparency, pre-commit hook, `--files` flag, PR number shorthand
+- **v0.1.0** ✅ — Memory layer: SQLite-backed persistent findings, cross-PR pattern detection, background daemon, `memory` and `insights` subcommands
+- **v0.2.0** — `--fix` flag: auto-apply suggested fixes with diff preview and confirmation
+- **v0.3.0** — Azure DevOps support
+- **v1.0.0** — Stable API, plugin system for custom focus areas
 
 ---
 
