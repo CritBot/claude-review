@@ -11,12 +11,14 @@ import (
 )
 
 // RunPipeline executes the full multi-agent review pipeline against the given diff payload.
+// memoryContext is an optional block injected into every finder agent prompt (pass "" to disable).
 //
 // Pipeline phases:
-//   Phase 1–3 (parallel): Finder agents, one per focus area, split across available agents
-//   Phase 4a (sequential): Verifier agent deduplicates and filters findings
-//   Phase 4b (sequential): Ranker agent sorts by severity and confidence
-func RunPipeline(ctx context.Context, payload *diff.Payload, cfg *config.Config, logf func(string, ...any)) (*PipelineResult, error) {
+//
+//	Phase 1–3 (parallel): Finder agents, one per focus area, split across available agents
+//	Phase 4a (sequential): Verifier agent deduplicates and filters findings
+//	Phase 4b (sequential): Ranker agent sorts by severity and confidence
+func RunPipeline(ctx context.Context, payload *diff.Payload, cfg *config.Config, memoryContext string, logf func(string, ...any)) (*PipelineResult, error) {
 	start := time.Now()
 
 	focusAreas := cfg.Focus
@@ -55,7 +57,7 @@ func RunPipeline(ctx context.Context, payload *diff.Payload, cfg *config.Config,
 			}
 			diffText := payload.SerializeFileSubset(agentFiles)
 
-			findings, usage, err := RunFinder(ctx, fa, diffText, idx, cfg)
+			findings, usage, err := RunFinder(ctx, fa, diffText, memoryContext, idx, cfg)
 			results[idx] = finderResult{findings: findings, usage: usage, focus: fa, err: err}
 
 			if err != nil {

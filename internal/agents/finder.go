@@ -15,7 +15,10 @@ No markdown fences, no explanation text, no preamble. Just the raw JSON array.
 If you find no issues, respond with an empty array: []`
 
 // RunFinder executes a finder agent for a specific focus area.
-func RunFinder(ctx context.Context, focus config.FocusArea, diffText string, agentIndex int, cfg *config.Config) ([]Finding, TokenUsage, error) {
+// memoryContext is an optional block of text from past reviews (may be empty).
+// When non-empty it is prepended to the prompt so the agent knows which files
+// are hotspots and which patterns have been seen before.
+func RunFinder(ctx context.Context, focus config.FocusArea, diffText, memoryContext string, agentIndex int, cfg *config.Config) ([]Finding, TokenUsage, error) {
 	templateName := fmt.Sprintf("finder-%s.md", string(focus))
 	tmplBytes, err := templates.FS.ReadFile(templateName)
 	if err != nil {
@@ -26,6 +29,9 @@ func RunFinder(ctx context.Context, focus config.FocusArea, diffText string, age
 	diffText = truncateDiff(diffText, cfg.MaxTokensPerAgent)
 
 	prompt := strings.ReplaceAll(string(tmplBytes), "{{DIFF}}", diffText)
+	if memoryContext != "" {
+		prompt = memoryContext + prompt
+	}
 
 	raw, usage, err := callAPI(ctx, cfg.Model, cfg.MaxTokensPerAgent, finderSystemPrompt, prompt)
 	if err != nil {

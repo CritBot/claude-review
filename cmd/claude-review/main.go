@@ -337,21 +337,21 @@ func runReview(ctx context.Context, cfg *config.Config, payload *diff.Payload, g
 	}
 
 	// v1.1: Query memory for context before running pipeline
+	var memoryContext string
 	if gf.useMemory {
 		cwd, _ := os.Getwd()
 		if db, err := memory.Open(cwd, ""); err == nil {
-			if ctx, err := memory.Query(ctx, db, payload); err == nil && ctx != nil {
-				block := ctx.FormatContextBlock()
-				if block != "" {
-					fmt.Fprintf(os.Stderr, "Memory: loaded context for %d hotspot files\n", len(ctx.HotspotFiles))
-					_ = block // TODO: inject into finder agent prompts
+			if mctx, err := memory.Query(ctx, db, payload); err == nil && mctx != nil {
+				memoryContext = mctx.FormatContextBlock()
+				if memoryContext != "" {
+					fmt.Fprintf(os.Stderr, "Memory: injecting context for %d hotspot file(s)\n", len(mctx.HotspotFiles))
 				}
 			}
 			db.Close()
 		}
 	}
 
-	result, err := agents.RunPipeline(ctx, payload, cfg, logger)
+	result, err := agents.RunPipeline(ctx, payload, cfg, memoryContext, logger)
 	if err != nil {
 		return fmt.Errorf("review pipeline failed: %w", err)
 	}
