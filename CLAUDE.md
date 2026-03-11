@@ -46,5 +46,30 @@
 ## Infrastructure
 
 - [x] Create `critbot/homebrew-tap` repo with `Formula/claude-review.rb`
-- [ ] Push `critbot/claude-review` to GitHub and tag `v0.1.0`
+- [x] Push `critbot/claude-review` to GitHub and tag `v0.1.0`
 - [ ] Set GitHub repo description and topics (`claude`, `code-review`, `ai`, `multi-agent`, `cli`)
+- [ ] Set `TAP_GITHUB_TOKEN` secret in repo settings (needed for auto-update-homebrew-tap job in release workflow)
+
+## v0.2.0 — `--fix` Auto-Apply
+
+- [ ] Implement `--fix` flag: parse `suggested_fix` field from findings and apply to source files
+- [ ] Show a unified diff of each proposed change before applying
+- [ ] Prompt for confirmation per-finding (skip in CI when `--yes` flag is passed)
+- [ ] Guard: verify the target line content still matches what the LLM saw before patching (abort if file changed)
+- [ ] Support `--yes` flag to apply all fixes non-interactively (for scripted use)
+- [ ] Add `--fix` tests covering apply, skip, and mismatch scenarios
+
+## v0.3.0 — Azure DevOps Support
+
+- [ ] Implement `internal/diff/azuredevops.go` — fetch PR diff via Azure DevOps REST API
+- [ ] URL detection: `dev.azure.com/org/project/_git/repo/pullrequest/ID`
+- [ ] Wire into `diff/router.go` and `cmd/claude-review/main.go` `buildPRCmd`
+- [ ] Add `azure_devops_token` to config + `AZURE_DEVOPS_TOKEN` env var
+- [ ] Update README install/CI example with Azure DevOps URL format
+
+## v1.0.0 — Stable API & Plugin System
+
+- [ ] Define stable public Go API (exported types in `pkg/` for embedding in other tools)
+- [ ] Plugin interface: allow custom focus-area agents via external Go plugins or config-defined prompts
+- [ ] Deprecation policy and CHANGELOG.md
+- [ ] Semantic versioning commitment + migration guide from v0.x
