@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/critbot/claude-review/internal/agents"
@@ -16,6 +18,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// consolidationWG lets the on-wake background consolidation finish even when
+// the primary command is fast (e.g. "insights"). For long-running reviews the
+// goroutine will almost always complete before the review does.
+var consolidationWG sync.WaitGroup
+
 var version = "0.1.0"
 
 func main() {
@@ -24,6 +31,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	// Wait for any background consolidation triggered by the on-wake check.
+	consolidationWG.Wait()
 }
 
 // shared CLI flags
@@ -75,6 +84,14 @@ Quick start:
 	}
 
 	addGlobalFlags(root, &gf)
+
+	// On-wake consolidation: piggybacks on every command invocation.
+	// If the memory DB exists and 30+ minutes have passed (or 10+ new findings),
+	// consolidation runs in the background — no daemon required.
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		maybeConsolidateBackground(cmd.Context())
+		return nil
+	}
 
 	root.AddCommand(buildDiffCmd(&gf))
 	root.AddCommand(buildPRCmd(&gf))
@@ -240,6 +257,53 @@ func loadConfig(gf globalFlags) (*config.Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// maybeConsolidateBackground fires a background consolidation if the memory DB
+// exists and ShouldConsolidate returns true. It never blocks the calling command.
+// This is the on-wake trigger: consolidation piggybacks on normal usage rather
+// than requiring a persistent daemon.
+func maybeConsolidateBackground(ctx context.Context) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+
+	// Only proceed if the user has ever used --memory (DB file exists).
+	dbPath := filepath.Join(cwd, ".claude-review", "memory.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return
+	}
+
+	db, err := memory.Open(cwd, "")
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	should, err := memory.ShouldConsolidate(ctx, db)
+	if err != nil || !should {
+		return
+	}
+
+	cfg, _ := config.Load("")
+	model := cfg.Model
+
+	consolidationWG.Add(1)
+	go func() {
+		defer consolidationWG.Done()
+		bgDB, err := memory.Open(cwd, "")
+		if err != nil {
+			return
+		}
+		defer bgDB.Close()
+		fmt.Fprintln(os.Stderr, "[memory] consolidating patterns in background...")
+		if err := memory.RunConsolidation(context.Background(), bgDB, model); err != nil {
+			fmt.Fprintf(os.Stderr, "[memory] consolidation error: %v\n", err)
+			return
+		}
+		fmt.Fprintln(os.Stderr, "[memory] ✓ consolidation complete")
+	}()
 }
 
 func runReview(ctx context.Context, cfg *config.Config, payload *diff.Payload, gf globalFlags) error {

@@ -21,11 +21,13 @@ After every review, findings are stored locally in a SQLite database. A backgrou
 
 After a month of use, your instance of `claude-review` knows things about your codebase that Anthropic's managed service never will — because theirs resets to zero on every PR. The memory is entirely local, entirely yours.
 
-**The three jobs the always-on memory agent runs as a persistent local process:**
+**The three jobs of the memory agent:**
 
 - **Ingest** — after every review run, all findings (file, line, severity, category, whether you later rejected them as noise) are stored in `.claude-review/memory.db`. Automatic, no configuration.
-- **Consolidate** — the daemon wakes every 30 minutes (or after 10 new findings), reads across all stored findings, and calls Claude with *metadata only — no source code* — to find non-obvious cross-PR patterns. "Your payments module has had null pointer bugs in 4 of the last 6 PRs." "Every time someone touches `auth.ts`, a critical slips through." Costs fractions of a cent per cycle.
-- **Query** — before the next review starts, finder agents query memory for the files being changed. They already know which areas are hotspots and which findings you've previously rejected as noise.
+- **Consolidate** — triggered automatically on your next command if 30+ minutes have passed since the last run, or immediately when 10+ new findings accumulate. Reads across all stored findings and calls Claude with *metadata only — no source code* — to find non-obvious cross-PR patterns. "Your payments module has had null pointer bugs in 4 of the last 6 PRs." "Every time someone touches `auth.ts`, a critical slips through." Costs fractions of a cent per cycle.
+- **Query** — before each review, finder agents query memory for the files being changed. They already know which areas are hotspots and which findings you've previously rejected as noise.
+
+**No daemon required.** Consolidation piggybacks on your normal usage — it fires in the background when you run any `claude-review` command, if the trigger conditions are met. No background process, no OS scheduler, no setup. Close your laptop and it pauses; open it and run a review and it catches up.
 
 This is built on SQLite. No vector database, no cloud sync, no embeddings.
 
@@ -123,18 +125,18 @@ All agents run via the **Anthropic API** using your own key. No data is stored a
 The memory layer is enabled with `--memory`. Enable it once in your project config and forget about it.
 
 ```bash
-# Start the background daemon (runs consolidation every 30 min or after 10 new findings)
-claude-review memory start
-
-# Run a review with memory context
+# Run a review — findings are stored automatically
 claude-review diff --memory
 claude-review pr 123 --memory
 
-# See what the daemon has learned about your codebase
+# Consolidation fires automatically on your next command when the time/volume
+# trigger is met. You'll see a brief "[memory] consolidating..." line on stderr.
+
+# See what the tool has learned about your codebase
 claude-review insights
 ```
 
-The database lives at `.claude-review/memory.db` in your repo root (already in `.gitignore`). The daemon writes a PID file and log to `~/.claude-review/`.
+The database lives at `.claude-review/memory.db` in your repo root (already in `.gitignore`). No daemon process required — consolidation triggers on any command invocation.
 
 **What gets stored:** file path, line, severity, category, description, PR reference, whether you accepted or rejected the finding. No source code is ever written to disk or sent to the API during consolidation — only this metadata.
 
