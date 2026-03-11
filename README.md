@@ -1,6 +1,6 @@
 # claude-review
 
-**Open-source multi-agent code review CLI powered by Claude.**
+**Open-source multi-agent code review CLI powered by Claude — with a memory that learns your codebase.**
 
 > Self-hosted · Bring-your-own-key · Works on GitHub, GitLab, Bitbucket, and local git repos
 
@@ -11,9 +11,27 @@
 
 ---
 
-## Why claude-review?
+## What makes this different
 
-Anthropic's built-in Code Review is $15–25/review, GitHub-only, and requires an Enterprise plan. `claude-review` fills every gap:
+Most AI code review tools — including Anthropic's own $25/review managed service — treat every PR in isolation. They look at the diff, produce findings, and forget everything. The next PR starts from zero.
+
+`claude-review` doesn't.
+
+After every review, findings are stored locally in a SQLite database. A background daemon wakes every 30 minutes and uses Claude to find patterns across your entire review history — patterns a single-PR review can never surface. Before the next review starts, those patterns are injected into every finder agent's prompt. The tool knows which files in your repo are hotspots and which categories of bugs keep slipping through.
+
+After a month of use, your instance of `claude-review` knows things about your codebase that Anthropic's managed service never will — because theirs resets to zero on every PR. The memory is entirely local, entirely yours.
+
+**The three jobs the always-on memory agent runs as a persistent local process:**
+
+- **Ingest** — after every review run, all findings (file, line, severity, category, whether you later rejected them as noise) are stored in `.claude-review/memory.db`. Automatic, no configuration.
+- **Consolidate** — the daemon wakes every 30 minutes (or after 10 new findings), reads across all stored findings, and calls Claude with *metadata only — no source code* — to find non-obvious cross-PR patterns. "Your payments module has had null pointer bugs in 4 of the last 6 PRs." "Every time someone touches `auth.ts`, a critical slips through." Costs fractions of a cent per cycle.
+- **Query** — before the next review starts, finder agents query memory for the files being changed. They already know which areas are hotspots and which findings you've previously rejected as noise.
+
+This is built on SQLite. No vector database, no cloud sync, no embeddings.
+
+---
+
+## Why claude-review vs the alternatives
 
 | Feature | Anthropic Code Review | claude-review |
 |---|---|---|
@@ -22,6 +40,9 @@ Anthropic's built-in Code Review is $15–25/review, GitHub-only, and requires a
 | Plan required | Team/Enterprise | Any Anthropic API access |
 | Self-hosted | No | Yes |
 | Open source | No | MIT |
+| **Memory across PRs** | **No — resets to zero every PR** | **Yes — learns your codebase over time** |
+| Cross-PR pattern detection | No | Yes — background consolidation daemon |
+| False positive suppression | No | Yes — rejected findings are remembered |
 
 ---
 
@@ -67,6 +88,9 @@ claude-review pr https://github.com/org/repo/pull/123
 
 # Review a GitLab MR
 claude-review pr https://gitlab.com/org/project/-/merge_requests/45
+
+# PR number shorthand (auto-detects remote)
+claude-review pr 123
 ```
 
 ---
@@ -90,7 +114,31 @@ Phase 4b (sequential):  Ranker agent
   └── Sorts by severity, elevates critical-file issues
 ```
 
-All agents run via the **Anthropic API** using your own key. No data is stored anywhere.
+All agents run via the **Anthropic API** using your own key. No data is stored anywhere except your local `memory.db`.
+
+---
+
+## Always-On Memory
+
+The memory layer is enabled with `--memory`. Enable it once in your project config and forget about it.
+
+```bash
+# Start the background daemon (runs consolidation every 30 min or after 10 new findings)
+claude-review memory start
+
+# Run a review with memory context
+claude-review diff --memory
+claude-review pr 123 --memory
+
+# See what the daemon has learned about your codebase
+claude-review insights
+```
+
+The database lives at `.claude-review/memory.db` in your repo root (already in `.gitignore`). The daemon writes a PID file and log to `~/.claude-review/`.
+
+**What gets stored:** file path, line, severity, category, description, PR reference, whether you accepted or rejected the finding. No source code is ever written to disk or sent to the API during consolidation — only this metadata.
+
+**False positive suppression:** if you mark a finding as noise twice, it's suppressed for the rest of the project's lifetime. The threshold is 2 rejections before suppression kicks in, to avoid accidentally silencing real bugs.
 
 ---
 
@@ -107,6 +155,14 @@ claude-review diff --estimate          # Show cost estimate, don't run
 claude-review diff --agents 6          # Use 6 finder agents
 claude-review diff --focus security    # Security-only review
 claude-review diff --model claude-sonnet-4-6  # Use Sonnet for deeper analysis
+claude-review diff --memory            # Memory-augmented review
+
+claude-review memory start             # Start consolidation daemon
+claude-review memory stop              # Stop daemon
+claude-review memory status            # Show daemon status and DB stats
+claude-review memory clear             # Wipe all stored findings
+claude-review memory install           # Install daemon as launchd/systemd service
+claude-review insights                 # Plain-English summary of cross-PR patterns
 
 claude-review install-hook             # Add as pre-commit hook
 claude-review install-hook --remove    # Remove the hook
@@ -275,7 +331,7 @@ make coverage-html     # open HTML report in browser
 ## Roadmap
 
 - **v0.1.0** ✅ — Core multi-agent pipeline (finder/verifier/ranker), GitHub/GitLab/Bitbucket support, Markdown/JSON/annotations output, cost transparency, pre-commit hook, `--files` flag, PR number shorthand
-- **v0.1.0** ✅ — Memory layer: SQLite-backed persistent findings, cross-PR pattern detection, background daemon, `memory` and `insights` subcommands
+- **v1.1** ✅ — Always-on memory layer: SQLite-backed persistent findings, 30-minute consolidation daemon, cross-PR pattern detection, `memory` and `insights` subcommands
 - **v0.2.0** — `--fix` flag: auto-apply suggested fixes with diff preview and confirmation
 - **v0.3.0** — Azure DevOps support
 - **v1.0.0** — Stable API, plugin system for custom focus areas
