@@ -1,0 +1,11 @@
+{
+  "_comment": "Example configuration for claude-review. Copy to your project root.",
+  "agents": 4,
+  "focus": ["logic", "security", "performance", "types", "tests"],
+  "model": "claude-haiku-4-5-20251001",
+  "confidence_threshold": 0.80,
+  "output": "REVIEW.md",
+  "max_tokens_per_agent": 4000,
+  "concurrent_agents": 3,
+  "max_cost_usd": 5.00
+}

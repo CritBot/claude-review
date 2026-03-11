@@ -1,0 +1,9 @@
+dist/
+*.exe
+*.test
+*.out
+.env
+.DS_Store
+REVIEW.md
+review.json
+.claude-review/
