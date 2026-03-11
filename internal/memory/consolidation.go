@@ -122,6 +122,11 @@ Example: ["auth.go has had 3 security findings across 4 PRs", "N+1 query pattern
 			return err
 		}
 	}
+
+	// Prune after consolidation to keep the DB small.
+	// Raw findings older than 90 days are removed; per file, only the 50 most
+	// recent are kept. Consolidated insights are never pruned.
+	_ = db.PruneOld(90, 50) // non-fatal: pruning failure doesn't break the review
 	return nil
 }
 

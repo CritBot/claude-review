@@ -287,6 +287,59 @@ func (db *DB) GetStats() (Stats, error) {
 	return s, nil
 }
 
+// PruneOld removes findings older than maxAgeDays and, per file, keeps only
+// the most recent maxPerFile findings. This keeps the DB small even on
+// long-lived repos. Consolidation records and false_positives are not pruned.
+//
+// Defaults: maxAgeDays=90, maxPerFile=50. Pass 0 for either to skip that pass.
+func (db *DB) PruneOld(maxAgeDays, maxPerFile int) error {
+	if maxAgeDays > 0 {
+		cutoff := time.Now().UTC().AddDate(0, 0, -maxAgeDays)
+		if _, err := db.conn.Exec(
+			`DELETE FROM findings WHERE repo = ? AND created_at < ?`,
+			db.repo, cutoff,
+		); err != nil {
+			return fmt.Errorf("pruning old findings: %w", err)
+		}
+	}
+
+	if maxPerFile > 0 {
+		// For each file, delete findings beyond the most recent maxPerFile.
+		// Done per-file in Go to avoid complex SQL that varies by SQLite version.
+		rows, err := db.conn.Query(
+			`SELECT DISTINCT file FROM findings WHERE repo = ?`, db.repo)
+		if err != nil {
+			return fmt.Errorf("listing files for per-file pruning: %w", err)
+		}
+		var files []string
+		for rows.Next() {
+			var f string
+			if err := rows.Scan(&f); err == nil {
+				files = append(files, f)
+			}
+		}
+		rows.Close()
+
+		for _, file := range files {
+			if _, err := db.conn.Exec(`
+				DELETE FROM findings
+				WHERE repo = ? AND file = ? AND id NOT IN (
+					SELECT id FROM findings
+					WHERE repo = ? AND file = ?
+					ORDER BY created_at DESC
+					LIMIT ?
+				)`, db.repo, file, db.repo, file, maxPerFile,
+			); err != nil {
+				return fmt.Errorf("pruning per-file findings for %s: %w", file, err)
+			}
+		}
+	}
+
+	// Reclaim disk space after deletions.
+	_, err := db.conn.Exec("PRAGMA incremental_vacuum;")
+	return err
+}
+
 // Clear deletes all memory for this repo.
 func (db *DB) Clear() error {
 	for _, table := range []string{"findings", "consolidations", "false_positives"} {
