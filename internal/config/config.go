@@ -36,6 +36,7 @@ type Config struct {
 	GitHubToken        string       `json:"github_token,omitempty"`
 	GitLabToken        string       `json:"gitlab_token,omitempty"`
 	GitLabHost         string       `json:"gitlab_host,omitempty"`
+	BitbucketToken     string       `json:"bitbucket_token,omitempty"` // "username:app_password"
 	ConcurrentAgents   int          `json:"concurrent_agents"`
 
 	// Runtime-only (not persisted)
@@ -84,6 +85,9 @@ func Load(configPath string) (*Config, error) {
 	}
 	if key := os.Getenv("GITLAB_TOKEN"); key != "" && cfg.GitLabToken == "" {
 		cfg.GitLabToken = key
+	}
+	if key := os.Getenv("BITBUCKET_TOKEN"); key != "" && cfg.BitbucketToken == "" {
+		cfg.BitbucketToken = key
 	}
 	if host := os.Getenv("GITLAB_HOST"); host != "" && cfg.GitLabHost == "https://gitlab.com" {
 		cfg.GitLabHost = host

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/critbot/claude-review/internal/agents"
 	"github.com/critbot/claude-review/internal/config"
 	"github.com/critbot/claude-review/internal/diff"
 	"github.com/critbot/claude-review/internal/hooks"
+	"github.com/critbot/claude-review/internal/memory"
 	"github.com/critbot/claude-review/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +38,7 @@ type globalFlags struct {
 	model      string
 	verbose    bool
 	noColor    bool
+	useMemory  bool
 }
 
 func buildRoot() *cobra.Command {
@@ -76,11 +79,15 @@ Quick start:
 	root.AddCommand(buildDiffCmd(&gf))
 	root.AddCommand(buildPRCmd(&gf))
 	root.AddCommand(buildInstallHookCmd())
+	root.AddCommand(buildMemoryCmd())
+	root.AddCommand(buildInsightsCmd())
 
 	return root
 }
 
 func buildDiffCmd(gf *globalFlags) *cobra.Command {
+	var files []string
+
 	cmd := &cobra.Command{
 		Use:   "diff [range]",
 		Short: "Review a git diff range",
@@ -99,9 +106,12 @@ Examples:
 			}
 
 			var payload *diff.Payload
-			if len(args) == 0 {
+			switch {
+			case len(files) > 0:
+				payload, err = diff.GetFiles(files)
+			case len(args) == 0:
 				payload, err = diff.GetStaged()
-			} else {
+			default:
 				payload, err = diff.GetRange(args[0])
 			}
 			if err != nil {
@@ -110,6 +120,7 @@ Examples:
 			return runReview(cmd.Context(), cfg, payload, *gf)
 		},
 	}
+	cmd.Flags().StringSliceVar(&files, "files", nil, "Review specific files only (comma-separated or repeated flag)")
 	return cmd
 }
 
@@ -117,13 +128,17 @@ func buildPRCmd(gf *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr <url>",
 		Short: "Review a GitHub PR or GitLab MR",
-		Long: `Review a pull request or merge request by URL.
+		Long: `Review a pull request or merge request by URL or number.
 
 Supported platforms:
   GitHub:    https://github.com/owner/repo/pull/123
   GitLab:    https://gitlab.com/owner/repo/-/merge_requests/45
+  Bitbucket: https://bitbucket.org/owner/repo/pull-requests/67
 
-Set GITHUB_TOKEN or GITLAB_TOKEN for private repos or to avoid rate limits.`,
+Shorthand (inside a git repo with a remote):
+  claude-review pr 123   # detects remote from git remote get-url origin
+
+Set GITHUB_TOKEN, GITLAB_TOKEN, or BITBUCKET_TOKEN for private repos.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(*gf)
@@ -131,7 +146,10 @@ Set GITHUB_TOKEN or GITLAB_TOKEN for private repos or to avoid rate limits.`,
 				return err
 			}
 
-			rawURL := args[0]
+			rawURL, err := diff.ResolveURL(args[0])
+			if err != nil {
+				return err
+			}
 			var payload *diff.Payload
 
 			switch {
@@ -141,8 +159,11 @@ Set GITHUB_TOKEN or GITLAB_TOKEN for private repos or to avoid rate limits.`,
 			case diff.IsGitLabURL(rawURL):
 				logf(cfg, "Fetching GitLab MR...")
 				payload, err = diff.FetchGitLabMR(rawURL, cfg.GitLabToken, cfg.GitLabHost)
+			case diff.IsBitbucketURL(rawURL):
+				logf(cfg, "Fetching Bitbucket PR...")
+				payload, err = diff.FetchBitbucketPR(rawURL, cfg.BitbucketToken)
 			default:
-				return fmt.Errorf("unrecognized URL format: %s\n\nSupported: github.com/*/pull/*, gitlab.com/*/merge_requests/*", rawURL)
+				return fmt.Errorf("unrecognized URL format: %s\n\nSupported: github.com/*/pull/*, gitlab.com/*/merge_requests/*, bitbucket.org/*/pull-requests/*", rawURL)
 			}
 			if err != nil {
 				return err
@@ -181,6 +202,7 @@ func addGlobalFlags(cmd *cobra.Command, gf *globalFlags) {
 	cmd.PersistentFlags().StringVar(&gf.model, "model", "", "Claude model to use (overrides config)")
 	cmd.PersistentFlags().BoolVar(&gf.verbose, "verbose", false, "Enable verbose logging")
 	cmd.PersistentFlags().BoolVar(&gf.noColor, "no-color", false, "Disable colored output")
+	cmd.PersistentFlags().BoolVar(&gf.useMemory, "memory", false, "Enable persistent memory layer (v1.1)")
 }
 
 func loadConfig(gf globalFlags) (*config.Config, error) {
@@ -250,9 +272,33 @@ func runReview(ctx context.Context, cfg *config.Config, payload *diff.Payload, g
 		}
 	}
 
+	// v1.1: Query memory for context before running pipeline
+	if gf.useMemory {
+		cwd, _ := os.Getwd()
+		if db, err := memory.Open(cwd, ""); err == nil {
+			if ctx, err := memory.Query(ctx, db, payload); err == nil && ctx != nil {
+				block := ctx.FormatContextBlock()
+				if block != "" {
+					fmt.Fprintf(os.Stderr, "Memory: loaded context for %d hotspot files\n", len(ctx.HotspotFiles))
+					_ = block // TODO: inject into finder agent prompts
+				}
+			}
+			db.Close()
+		}
+	}
+
 	result, err := agents.RunPipeline(ctx, payload, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("review pipeline failed: %w", err)
+	}
+
+	// v1.1: Ingest findings into memory after pipeline
+	if gf.useMemory {
+		cwd, _ := os.Getwd()
+		if db, err := memory.Open(cwd, ""); err == nil {
+			_ = memory.Ingest(ctx, db, result, payload.PRURL)
+			db.Close()
+		}
 	}
 
 	output.PrintCostSummary(os.Stderr, result.Usage, result.DurationSecs)
@@ -270,6 +316,17 @@ func runReview(ctx context.Context, cfg *config.Config, payload *diff.Payload, g
 		}
 		if err := output.WriteJSON(outPath, result, payload, cfg.Model); err != nil {
 			return fmt.Errorf("writing JSON output: %w", err)
+		}
+		if outPath != "-" {
+			fmt.Fprintf(os.Stderr, "\nWrote %s\n", outPath)
+		}
+
+	case config.FormatAnnotations:
+		if outPath == "REVIEW.md" {
+			outPath = "annotations.json"
+		}
+		if err := output.WriteAnnotations(outPath, result, payload); err != nil {
+			return fmt.Errorf("writing annotations output: %w", err)
 		}
 		if outPath != "-" {
 			fmt.Fprintf(os.Stderr, "\nWrote %s\n", outPath)
@@ -316,4 +373,169 @@ func printSummaryToTerminal(result *agents.PipelineResult) {
 
 func logf(cfg *config.Config, format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+func buildMemoryCmd() *cobra.Command {
+	var daemonLoop bool
+	cmd := &cobra.Command{
+		Use:   "memory",
+		Short: "Manage the persistent memory layer (v1.1)",
+		Long: `claude-review memory manages the SQLite-backed codebase memory layer.
+
+Memory is opt-in. Without --memory on review commands, claude-review is stateless.
+When enabled, findings are stored per-repo and used to prioritize future reviews.`,
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "start",
+		Short: "Start the background consolidation daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			paths, err := memory.DefaultDaemonPaths()
+			if err != nil {
+				return err
+			}
+			return memory.StartDaemon(paths)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "stop",
+		Short: "Stop the background consolidation daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			paths, err := memory.DefaultDaemonPaths()
+			if err != nil {
+				return err
+			}
+			return memory.StopDaemon(paths)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show daemon status and memory statistics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			paths, err := memory.DefaultDaemonPaths()
+			if err != nil {
+				return err
+			}
+			status := memory.GetDaemonStatus(paths)
+			if status.Running {
+				fmt.Printf("Daemon: running (PID %d)\n", status.PID)
+			} else {
+				fmt.Println("Daemon: not running")
+			}
+			fmt.Printf("DB path: %s\n", paths.HomeDir)
+
+			cwd, _ := os.Getwd()
+			db, err := memory.Open(cwd, "")
+			if err == nil {
+				defer db.Close()
+				stats, _ := db.GetStats()
+				fmt.Printf("Findings stored: %d (accepted: %d)\n", stats.TotalFindings, stats.AcceptedFindings)
+				fmt.Printf("Consolidations:  %d\n", stats.Consolidations)
+				fmt.Printf("False positives: %d\n", stats.FalsePositives)
+				if !stats.LastConsolidation.IsZero() {
+					fmt.Printf("Last consolidation: %s\n", stats.LastConsolidation.Format("2006-01-02 15:04"))
+				}
+			}
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "clear",
+		Short: "Delete all stored findings for this repo",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			db, err := memory.Open(cwd, "")
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			if err := db.Clear(); err != nil {
+				return err
+			}
+			fmt.Println("✓ Memory cleared for this repo")
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "install",
+		Short: "Install the daemon as a login service (launchd/systemd)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			paths, err := memory.DefaultDaemonPaths()
+			if err != nil {
+				return err
+			}
+			return memory.InstallAutostart(paths)
+		},
+	})
+
+	// Hidden flag for the daemon loop itself
+	cmd.PersistentFlags().BoolVar(&daemonLoop, "daemon-loop", false, "Run as background daemon loop")
+	cmd.Flag("daemon-loop").Hidden = true
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !daemonLoop {
+			return cmd.Help()
+		}
+		return runDaemonLoop()
+	}
+
+	return cmd
+}
+
+// runDaemonLoop is the long-running consolidation daemon process.
+func runDaemonLoop() error {
+	fmt.Println("claude-review memory daemon started")
+	cwd, _ := os.Getwd()
+	cfg, _ := config.Load("")
+
+	for {
+		db, err := memory.Open(cwd, "")
+		if err == nil {
+			should, _ := memory.ShouldConsolidate(context.Background(), db)
+			if should {
+				fmt.Printf("[%s] Running consolidation...\n", time.Now().Format("15:04:05"))
+				if err := memory.RunConsolidation(context.Background(), db, cfg.Model); err != nil {
+					fmt.Printf("[%s] Consolidation error: %v\n", time.Now().Format("15:04:05"), err)
+				}
+			}
+			db.Close()
+		}
+		time.Sleep(5 * time.Minute)
+	}
+}
+
+func buildInsightsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "insights",
+		Short: "Show cross-PR pattern insights from memory (v1.1)",
+		Long:  "Displays consolidated insights about recurring patterns, hotspot files, and trends across all reviews stored in memory.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			db, err := memory.Open(cwd, "")
+			if err != nil {
+				return fmt.Errorf("memory not initialized — run a review with --memory first")
+			}
+			defer db.Close()
+
+			consolidations, err := db.GetRecentConsolidations(20)
+			if err != nil {
+				return err
+			}
+			if len(consolidations) == 0 {
+				fmt.Println("No insights yet. Run a few reviews with --memory to build up patterns.")
+				return nil
+			}
+
+			fmt.Println("Cross-PR Insights")
+			fmt.Println("─────────────────")
+			for i, c := range consolidations {
+				fmt.Printf("%d. %s\n", i+1, c.InsightText)
+				fmt.Printf("   (recorded %s)\n\n", c.CreatedAt.Format("2006-01-02"))
+			}
+			return nil
+		},
+	}
 }

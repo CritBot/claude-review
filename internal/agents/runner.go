@@ -173,6 +173,11 @@ func parseJSONResponse(raw string, target any) error {
 	return json.Unmarshal([]byte(raw[start:end+1]), target)
 }
 
+// CallAPIForConsolidation is a public wrapper used by the memory consolidation agent.
+func CallAPIForConsolidation(ctx context.Context, model string, maxTokens int, system, user string) (string, TokenUsage, error) {
+	return callAPI(ctx, model, maxTokens, system, user)
+}
+
 func truncateStr(s string, n int) string {
 	if len(s) <= n {
 		return s

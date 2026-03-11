@@ -8,6 +8,8 @@ import (
 
 	"github.com/critbot/claude-review/internal/agents"
 	"github.com/critbot/claude-review/internal/diff"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // WriteMarkdown generates a REVIEW.md file and writes it to path.
@@ -59,7 +61,7 @@ func buildMarkdown(result *agents.PipelineResult, payload *diff.Payload) string 
 		}
 
 		emoji := sevEmoji(sev)
-		b.WriteString(fmt.Sprintf("---\n\n## %s %s\n\n", emoji, strings.Title(string(sev))))
+		b.WriteString(fmt.Sprintf("---\n\n## %s %s\n\n", emoji, cases.Title(language.English).String(string(sev))))
 
 		for _, f := range findings {
 			b.WriteString(fmt.Sprintf("### %s", f.Description[:min(len(f.Description), 80)]))

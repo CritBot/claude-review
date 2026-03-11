@@ -5,6 +5,8 @@
 > Self-hosted · Bring-your-own-key · Works on GitHub, GitLab, Bitbucket, and local git repos
 
 [![GitHub release](https://img.shields.io/github/v/release/critbot/claude-review)](https://github.com/critbot/claude-review/releases)
+[![CI](https://github.com/critbot/claude-review/actions/workflows/ci.yml/badge.svg)](https://github.com/critbot/claude-review/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-40%25%2B-brightgreen)](https://github.com/critbot/claude-review/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -237,6 +239,39 @@ jobs:
 
 ---
 
+## CI/CD
+
+Two GitHub Actions workflows are included:
+
+### `ci.yml` — runs on every push and PR
+| Step | Details |
+|------|---------|
+| `go vet` | Static analysis |
+| `go test -race ./...` | Tests with race detector |
+| Coverage report | Generates `coverage/coverage.out` |
+| **Coverage gate** | Fails build if total coverage drops below **40%** |
+| Cross-platform build | Verifies binary compiles for linux/darwin/windows × amd64/arm64 |
+
+The coverage threshold is enforced in both CI and the release pipeline — a tag push cannot produce a release if coverage falls below the minimum.
+
+### `release.yml` — runs on `v*` tag push
+| Step | Details |
+|------|---------|
+| Tests + coverage gate | Same checks as CI — must pass before release |
+| Cross-compile | Builds binaries for all 5 platforms |
+| `sha256sum` | Generates `checksums.txt` and attaches it to the release |
+| GitHub Release | Creates release with all binaries and auto-generated notes |
+| Homebrew tap | Auto-updates `critbot/homebrew-tap` with new version and SHA256s |
+
+### Local coverage commands
+```bash
+make coverage          # run tests and print per-function coverage
+make coverage-check    # fail if total < 40%
+make coverage-html     # open HTML report in browser
+```
+
+---
+
 ## Roadmap
 
 - **v1.0** — Core multi-agent pipeline, GitHub/GitLab support, Markdown/JSON output
@@ -253,8 +288,10 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 ```bash
 git clone https://github.com/critbot/claude-review
 cd claude-review
-go test ./...
-make build
+go test -race ./...        # run tests
+make coverage              # generate coverage report
+make coverage-check        # verify ≥40% threshold
+make build                 # build binary to dist/
 ```
 
 ---
