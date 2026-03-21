@@ -334,9 +334,9 @@ make coverage-html     # open HTML report in browser
 
 - **v0.1.0** ✅ — Core multi-agent pipeline (finder/verifier/ranker), GitHub/GitLab/Bitbucket support, Markdown/JSON/annotations output, cost transparency, pre-commit hook, `--files` flag, PR number shorthand
 - **v1.1.0** ✅ — Always-on memory layer: SQLite-backed persistent findings, on-wake consolidation trigger, cross-PR pattern detection, DB pruning, `memory` and `insights` subcommands
-- **v1.2.0** — `--fix` flag: auto-apply suggested fixes with diff preview and confirmation
-- **v1.3.0** — Azure DevOps support
-- **v2.0.0** — Stable API, plugin system for custom focus areas
+- **v1.2.0** — `--fix` flag: auto-apply suggested fixes with diff preview and confirmation; `.reviewrc.yml` custom rules injected into finder prompts; Context Scraper (index past PR comments + review decisions to seed memory on day one)
+- **v1.3.0** — CVE database integration (OSV/NVD lookup for security findings, "similar to CVE-X" framing); Plugin/Recipe system (named prompt bundles, community marketplace, `--recipe fintech-pci`); Azure DevOps support
+- **v2.0.0** — Stable API, plugin system for custom focus areas; Self-hosting: pluggable storage (SQLite → Postgres), Bedrock/Vertex API backends, multi-user server mode, web UI
 
 ---
 
